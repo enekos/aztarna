@@ -1,0 +1,6 @@
+/target
+Cargo.lock.bak
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.DS_Store
