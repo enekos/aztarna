@@ -15,8 +15,8 @@ pub fn default_db_path() -> Result<PathBuf> {
 }
 
 pub fn open(path: &Path) -> Result<Connection> {
-    let conn = Connection::open(path)
-        .with_context(|| format!("open sqlite at {}", path.display()))?;
+    let conn =
+        Connection::open(path).with_context(|| format!("open sqlite at {}", path.display()))?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;

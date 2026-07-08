@@ -31,12 +31,14 @@ pub fn top(
     scope: &Path,
     half_life_days: f64,
     limit: usize,
+    query: Option<&str>,
+    success_only: bool,
 ) -> Result<Vec<TopRow>> {
     let now = Utc::now().timestamp();
     let half_life_secs = half_life_days * 86_400.0;
+    let query_pattern = query.map(|q| format!("%{}%", q.to_lowercase()));
+    let success_filter = success_only as i64;
 
-    // For each head: decay-weighted score, raw hit count, and the most recent
-    // full command for that head (helpful when surfacing examples to humans).
     let mut stmt = conn.prepare(
         r#"
         WITH scored AS (
@@ -47,6 +49,8 @@ pub fn top(
                 decay_score(CAST(?1 - ts AS REAL), ?2) AS w
             FROM commands
             WHERE scope = ?3
+              AND (?4 IS NULL OR LOWER(command) LIKE ?4)
+              AND (?5 = 0 OR exit_code = 0)
         ),
         agg AS (
             SELECT
@@ -63,15 +67,24 @@ pub fn top(
             agg.hits,
             (SELECT command FROM commands
               WHERE scope = ?3 AND head = agg.head
+                AND (?4 IS NULL OR LOWER(command) LIKE ?4)
+                AND (?5 = 0 OR exit_code = 0)
               ORDER BY ts DESC LIMIT 1) AS last_command
         FROM agg
         ORDER BY agg.score DESC, agg.hits DESC
-        LIMIT ?4
+        LIMIT ?6
         "#,
     )?;
 
     let rows = stmt.query_map(
-        params![now, half_life_secs, scope.to_string_lossy(), limit as i64],
+        params![
+            now,
+            half_life_secs,
+            scope.to_string_lossy(),
+            query_pattern.as_deref(),
+            success_filter,
+            limit as i64
+        ],
         |row| {
             Ok(TopRow {
                 head: row.get(0)?,
@@ -92,11 +105,7 @@ pub fn top(
 /// Most common (prev_head -> next_head) transitions inside a single session,
 /// scoped by either the previous or next row's scope. Self-transitions are
 /// filtered out — they're usually noise (re-running the same `ls`).
-pub fn sequences(
-    conn: &Connection,
-    scope: &Path,
-    limit: usize,
-) -> Result<Vec<SequenceRow>> {
+pub fn sequences(conn: &Connection, scope: &Path, limit: usize) -> Result<Vec<SequenceRow>> {
     let mut stmt = conn.prepare(
         r#"
         WITH ordered AS (
@@ -185,7 +194,7 @@ pub fn context_block(
     top_n: usize,
     seq_n: usize,
 ) -> Result<String> {
-    let tops = top(conn, scope, half_life_days, top_n)?;
+    let tops = top(conn, scope, half_life_days, top_n, None, false)?;
     if tops.is_empty() {
         return Ok(String::new());
     }
@@ -196,7 +205,9 @@ pub fn context_block(
         "## Frequently-used commands in {}\n\n",
         scope.display()
     ));
-    out.push_str("Ranked by recency-weighted frequency. Prefer these forms when they fit the task.\n\n");
+    out.push_str(
+        "Ranked by recency-weighted frequency. Prefer these forms when they fit the task.\n\n",
+    );
     for (i, row) in tops.iter().enumerate() {
         let example = truncate_one_line(&row.last_command, 80);
         let noun = if row.hits == 1 { "run" } else { "runs" };

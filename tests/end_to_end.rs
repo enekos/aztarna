@@ -50,7 +50,15 @@ fn ingest_and_top_groups_by_head() {
     ingest::ingest(&conn, &payload("s1", cwd, "ls -la")).unwrap();
 
     let scope = PathBuf::from(cwd);
-    let top = query::top(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 10).unwrap();
+    let top = query::top(
+        &conn,
+        &scope,
+        query::DEFAULT_HALF_LIFE_DAYS,
+        10,
+        None,
+        false,
+    )
+    .unwrap();
 
     assert_eq!(top.len(), 3);
     assert_eq!(top[0].head, "cargo test");
@@ -85,7 +93,15 @@ fn cd_command_is_ignored() {
 
     // Verify it doesn't show up in rankings either.
     let scope = PathBuf::from("/tmp/x");
-    let top = query::top(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 10).unwrap();
+    let top = query::top(
+        &conn,
+        &scope,
+        query::DEFAULT_HALF_LIFE_DAYS,
+        10,
+        None,
+        false,
+    )
+    .unwrap();
     assert!(top.is_empty());
 }
 
@@ -98,12 +114,28 @@ fn cd_prefix_updates_cwd_and_scope() {
 
     // Scope should be /tmp/y, not /tmp/x.
     let y_scope = PathBuf::from("/tmp/y");
-    let top = query::top(&conn, &y_scope, query::DEFAULT_HALF_LIFE_DAYS, 10).unwrap();
+    let top = query::top(
+        &conn,
+        &y_scope,
+        query::DEFAULT_HALF_LIFE_DAYS,
+        10,
+        None,
+        false,
+    )
+    .unwrap();
     assert_eq!(top.len(), 1);
     assert_eq!(top[0].head, "cargo test");
 
     let x_scope = PathBuf::from("/tmp/x");
-    let top_x = query::top(&conn, &x_scope, query::DEFAULT_HALF_LIFE_DAYS, 10).unwrap();
+    let top_x = query::top(
+        &conn,
+        &x_scope,
+        query::DEFAULT_HALF_LIFE_DAYS,
+        10,
+        None,
+        false,
+    )
+    .unwrap();
     assert!(top_x.is_empty());
 }
 
@@ -115,7 +147,15 @@ fn iterative_cd_prefix_updates_cwd() {
     assert!(id.is_some());
 
     let z_scope = PathBuf::from("/tmp/z");
-    let top = query::top(&conn, &z_scope, query::DEFAULT_HALF_LIFE_DAYS, 10).unwrap();
+    let top = query::top(
+        &conn,
+        &z_scope,
+        query::DEFAULT_HALF_LIFE_DAYS,
+        10,
+        None,
+        false,
+    )
+    .unwrap();
     assert_eq!(top.len(), 1);
     assert_eq!(top[0].head, "cargo build");
 }
@@ -133,7 +173,15 @@ fn decay_demotes_old_commands() {
     }
 
     let scope = PathBuf::from(cwd);
-    let top = query::top(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 10).unwrap();
+    let top = query::top(
+        &conn,
+        &scope,
+        query::DEFAULT_HALF_LIFE_DAYS,
+        10,
+        None,
+        false,
+    )
+    .unwrap();
 
     // Even though git status has 8x the raw hits, 90-day-old runs with a
     // 14-day half-life are worth ~0.013 each → ~0.1 total, far below the
@@ -150,7 +198,7 @@ fn no_decay_when_half_life_is_zero() {
     backdate_latest(&conn, 365);
 
     let scope = PathBuf::from(cwd);
-    let top = query::top(&conn, &scope, 0.0, 10).unwrap();
+    let top = query::top(&conn, &scope, 0.0, 10, None, false).unwrap();
     // half_life=0 short-circuits the SQL function to weight=1 per hit.
     assert_eq!(top[0].hits, 1);
     assert!((top[0].score - 1.0).abs() < 1e-9);
@@ -217,13 +265,53 @@ fn scope_isolates_projects() {
     ingest::ingest(&conn, &payload("s1", "/tmp/proj-x", "cargo test")).unwrap();
     ingest::ingest(&conn, &payload("s1", "/tmp/proj-y", "go test ./...")).unwrap();
 
-    let x = query::top(&conn, &PathBuf::from("/tmp/proj-x"), 14.0, 10).unwrap();
-    let y = query::top(&conn, &PathBuf::from("/tmp/proj-y"), 14.0, 10).unwrap();
+    let x = query::top(&conn, &PathBuf::from("/tmp/proj-x"), 14.0, 10, None, false).unwrap();
+    let y = query::top(&conn, &PathBuf::from("/tmp/proj-y"), 14.0, 10, None, false).unwrap();
 
     assert_eq!(x.len(), 1);
     assert_eq!(x[0].head, "cargo test");
     assert_eq!(y.len(), 1);
     assert_eq!(y[0].head, "go test");
+}
+
+#[test]
+fn top_query_filters_by_command_text() {
+    let (_tmp, conn) = fresh_db();
+    let cwd = "/tmp/proj-query";
+
+    ingest::ingest(&conn, &payload("s1", cwd, "cargo test --lib")).unwrap();
+    ingest::ingest(&conn, &payload("s1", cwd, "cargo build --release")).unwrap();
+    ingest::ingest(&conn, &payload("s1", cwd, "git status -s")).unwrap();
+
+    let scope = PathBuf::from(cwd);
+    let top = query::top(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 10, Some("test"), false).unwrap();
+
+    assert_eq!(top.len(), 1);
+    assert_eq!(top[0].head, "cargo test");
+    assert_eq!(top[0].hits, 1);
+}
+
+#[test]
+fn top_success_only_excludes_failures() {
+    let (_tmp, conn) = fresh_db();
+    let cwd = "/tmp/proj-success";
+
+    let mut success = payload("s1", cwd, "cargo test");
+    success.tool_response.exit_code = Some(0);
+    ingest::ingest(&conn, &success).unwrap();
+
+    let mut failure = payload("s1", cwd, "cargo test");
+    failure.tool_response.exit_code = Some(1);
+    for _ in 0..5 {
+        ingest::ingest(&conn, &failure).unwrap();
+    }
+
+    let scope = PathBuf::from(cwd);
+    let top_all = query::top(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 10, None, false).unwrap();
+    let top_ok = query::top(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 10, None, true).unwrap();
+
+    assert_eq!(top_all[0].hits, 6, "all runs counted without success_only");
+    assert_eq!(top_ok[0].hits, 1, "only successful runs counted");
 }
 
 #[test]
@@ -247,8 +335,7 @@ fn context_block_includes_top_and_sequences() {
 #[test]
 fn context_block_empty_when_no_data() {
     let (_tmp, conn) = fresh_db();
-    let block =
-        query::context_block(&conn, &PathBuf::from("/nowhere"), 14.0, 10, 10).unwrap();
+    let block = query::context_block(&conn, &PathBuf::from("/nowhere"), 14.0, 10, 10).unwrap();
     assert_eq!(block, "");
 }
 

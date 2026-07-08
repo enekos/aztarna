@@ -5,7 +5,11 @@ use std::io::Read;
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "aztarna", version, about = "Per-cwd bash command ranker for Claude Code")]
+#[command(
+    name = "aztarna",
+    version,
+    about = "Per-cwd bash command ranker for Claude Code"
+)]
 struct Cli {
     /// Override the database path. Defaults to the per-user data dir.
     #[arg(long, global = true, env = "AZTARNA_DB")]
@@ -41,6 +45,12 @@ enum Cmd {
         limit: usize,
         #[arg(long, default_value_t = query::DEFAULT_HALF_LIFE_DAYS)]
         half_life_days: f64,
+        /// Filter to commands whose full text contains this substring (case-insensitive).
+        #[arg(long)]
+        query: Option<String>,
+        /// Only count commands that exited successfully (exit code 0).
+        #[arg(long)]
+        success_only: bool,
         /// Emit JSON instead of a human table.
         #[arg(long)]
         json: bool,
@@ -110,10 +120,19 @@ fn main() -> Result<()> {
             scope,
             limit,
             half_life_days,
+            query,
+            success_only,
             json,
         } => {
             let scope_path = resolve_scope(cwd, scope)?;
-            let rows = query::top(&conn, &scope_path, half_life_days, limit)?;
+            let rows = query::top(
+                &conn,
+                &scope_path,
+                half_life_days,
+                limit,
+                query.as_deref(),
+                success_only,
+            )?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&rows)?);
             } else {
@@ -170,7 +189,10 @@ fn print_top(scope: &std::path::Path, rows: &[query::TopRow]) {
         return;
     }
     println!("scope: {}", scope.display());
-    println!("{:>3}  {:>8}  {:>5}  {:<24}  {}", "#", "score", "hits", "head", "last");
+    println!(
+        "{:>3}  {:>8}  {:>5}  {:<24}  last",
+        "#", "score", "hits", "head"
+    );
     for (i, r) in rows.iter().enumerate() {
         let last = truncate(&r.last_command, 60);
         println!(
@@ -190,7 +212,7 @@ fn print_sequences(scope: &std::path::Path, rows: &[query::SequenceRow]) {
         return;
     }
     println!("scope: {}", scope.display());
-    println!("{:>5}  {:<24} -> {}", "hits", "prev", "next");
+    println!("{:>5}  {:<24} -> next", "hits", "prev");
     for r in rows {
         println!("{:>5}  {:<24} -> {}", r.hits, r.prev, r.next);
     }

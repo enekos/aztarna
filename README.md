@@ -64,6 +64,8 @@ To uninstall, delete the binary, drop the `hooks` entries from
 ```
 aztarna log               # ingest one PostToolUse payload from stdin (hook use)
 aztarna top               # ranked commands for the current project
+aztarna top --query test  # filter to commands containing "test"
+aztarna top --success-only  # only commands that exited successfully
 aztarna sequences         # common (A -> B) command pairs
 aztarna context           # markdown block injected into SessionStart
 aztarna stats             # row count, distinct scopes, etc.
@@ -74,6 +76,8 @@ Flags worth knowing:
 - `--cwd <path>` query as if you were in `<path>`
 - `--scope <path>` override the scope directly, skipping git-root resolution
 - `--half-life-days <n>` change the decay constant for one query
+- `--query <term>` filter `top` results to commands containing `<term>` (case-insensitive)
+- `--success-only` only include commands with exit code 0
 - `--json` machine-readable output for `top`, `sequences`, `stats`
 - `--db <path>` use a different sqlite file (handy for tests)
 

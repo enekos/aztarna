@@ -14,16 +14,59 @@ const STRIP_PREFIXES: &[&str] = &["sudo", "env", "time", "nohup"];
 /// Two-token verbs whose second word is meaningful (subcommands).
 /// For other binaries, we keep just the first token to avoid over-splitting.
 const TWO_TOKEN_VERBS: &[&str] = &[
-    "cargo", "git", "npm", "pnpm", "yarn", "bun", "deno",
-    "go", "gh", "docker", "kubectl", "make", "just",
-    "uv", "pip", "poetry", "rye", "python", "python3",
-    "node", "rake", "bundle", "rails", "mix", "brew",
-    "aws", "gcloud", "az", "terraform", "tofu", "ansible",
-    "psql", "mysql", "redis-cli", "sqlite3",
-    "rustup", "rustc", "rg", "fd", "fzf", "tmux", "ssh",
-    "apt", "apt-get", "dnf", "yum", "pacman", "apk",
-    "systemctl", "journalctl", "launchctl",
-    "claude", "anthropic",
+    "cargo",
+    "git",
+    "npm",
+    "pnpm",
+    "yarn",
+    "bun",
+    "deno",
+    "go",
+    "gh",
+    "docker",
+    "kubectl",
+    "make",
+    "just",
+    "uv",
+    "pip",
+    "poetry",
+    "rye",
+    "python",
+    "python3",
+    "node",
+    "rake",
+    "bundle",
+    "rails",
+    "mix",
+    "brew",
+    "aws",
+    "gcloud",
+    "az",
+    "terraform",
+    "tofu",
+    "ansible",
+    "psql",
+    "mysql",
+    "redis-cli",
+    "sqlite3",
+    "rustup",
+    "rustc",
+    "rg",
+    "fd",
+    "fzf",
+    "tmux",
+    "ssh",
+    "apt",
+    "apt-get",
+    "dnf",
+    "yum",
+    "pacman",
+    "apk",
+    "systemctl",
+    "journalctl",
+    "launchctl",
+    "claude",
+    "anthropic",
 ];
 
 pub fn head(command: &str) -> String {
@@ -39,8 +82,7 @@ pub fn head(command: &str) -> String {
     // Strip leading env-var assignments and wrapper commands. Interleave —
     // `env FOO=bar cmd` and `sudo FOO=bar cmd` both need to peel off two
     // different kinds of prefix before reaching the real command.
-    loop {
-        let Some(t) = tokens.first() else { break };
+    while let Some(t) = tokens.first() {
         if is_env_assignment(t) {
             tokens.remove(0);
             continue;
@@ -58,12 +100,12 @@ pub fn head(command: &str) -> String {
 
     let first = basename(&tokens[0]);
 
-    if TWO_TOKEN_VERBS.contains(&first.as_str()) {
-        if let Some(second) = tokens.get(1) {
-            // Skip flags as the "second token"; just use first if next is a flag.
-            if !second.starts_with('-') {
-                return format!("{first} {second}");
-            }
+    if TWO_TOKEN_VERBS.contains(&first.as_str())
+        && let Some(second) = tokens.get(1)
+    {
+        // Skip flags as the "second token"; just use first if next is a flag.
+        if !second.starts_with('-') {
+            return format!("{first} {second}");
         }
     }
 
@@ -106,10 +148,10 @@ pub(crate) fn split_leading(s: &str) -> &str {
     let candidates = [" | ", " || ", " && ", " ; ", ";"];
     let mut best = s.len();
     for c in &candidates {
-        if let Some(idx) = s.find(c) {
-            if idx < best {
-                best = idx;
-            }
+        if let Some(idx) = s.find(c)
+            && idx < best
+        {
+            best = idx;
         }
     }
     s[..best].trim_end()
@@ -144,9 +186,7 @@ fn is_env_assignment(t: &str) -> bool {
     if let Some(eq) = t.find('=') {
         let name = &t[..eq];
         !name.is_empty()
-            && name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
             && name.chars().next().is_some_and(|c| !c.is_ascii_digit())
     } else {
         false
