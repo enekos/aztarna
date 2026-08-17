@@ -86,6 +86,25 @@ enum Cmd {
         half_life_days: f64,
     },
 
+    /// Emit Claude Code `permissions.allow` entries for this scope's
+    /// top-ranked commands, as JSON on stdout. Merge into
+    /// `.claude/settings.json` (project) or `settings.local.json` (personal)
+    /// to stop re-answering permission prompts for habitual commands.
+    Allowlist {
+        #[arg(long)]
+        cwd: Option<PathBuf>,
+        #[arg(long, conflicts_with = "cwd")]
+        scope: Option<PathBuf>,
+        /// How many top commands to export.
+        #[arg(short = 'n', long, default_value_t = 15)]
+        limit: usize,
+        /// Drop commands whose success-weighted score is below this.
+        #[arg(long, default_value_t = 0.0)]
+        min_score: f64,
+        #[arg(long, default_value_t = query::DEFAULT_HALF_LIFE_DAYS)]
+        half_life_days: f64,
+    },
+
     /// Database stats — useful for sanity checks.
     Stats,
 }
@@ -177,6 +196,18 @@ fn main() -> Result<()> {
             let scope_path = resolve_scope(cwd, scope)?;
             let block = query::context_block(&conn, &scope_path, half_life_days, top, sequences)?;
             print!("{block}");
+        }
+        Cmd::Allowlist {
+            cwd,
+            scope,
+            limit,
+            min_score,
+            half_life_days,
+        } => {
+            let scope_path = resolve_scope(cwd, scope)?;
+            let rules = query::allowlist(&conn, &scope_path, half_life_days, limit, min_score)?;
+            let doc = serde_json::json!({ "permissions": { "allow": rules } });
+            println!("{}", serde_json::to_string_pretty(&doc)?);
         }
         Cmd::Stats => {
             let s = query::stats(&conn)?;

@@ -70,6 +70,7 @@ aztarna top --query test  # filter to commands containing "test"
 aztarna top --success-only  # only commands that exited successfully
 aztarna top --failing       # rank by decay-weighted failures instead
 aztarna sequences         # common (A -> B) command pairs
+aztarna allowlist         # permissions.allow JSON for this project's top commands
 aztarna context           # markdown block injected into SessionStart
 aztarna stats             # row count, distinct scopes, etc.
 aztarna init              # explicitly create the db (also auto-created)
@@ -84,6 +85,27 @@ Flags worth knowing:
 - `--json` machine-readable output for `top`, `sequences`, `stats`
 - `--db <path>` use a different sqlite file (handy for tests)
 
+### Closing the permission-prompt loop
+
+`aztarna allowlist` turns this project's top-ranked commands into Claude Code
+`permissions.allow` entries on stdout:
+
+```json
+{
+  "permissions": {
+    "allow": ["Bash(cargo test:*)", "Bash(cargo clippy:*)"]
+  }
+}
+```
+
+The `:*` suffix is Claude Code's prefix-match form (equivalent to a trailing
+` *` wildcard), so one rule covers any arguments to that command head. Merge
+the output into `.claude/settings.json` (shared with the team) or
+`.claude/settings.local.json` (just you). Ranking is success-weighted, so
+chronically failing commands demote themselves out of the list, and commands
+Claude Code treats as read-only anyway (`ls`, `git status`, ...) are skipped.
+Flags: `-n` for count (default 15), `--min-score` to drop low scorers.
+
 ## Roadmap
 
 - [ ] Argument-level fingerprinting (group `cargo test --release` and
@@ -92,7 +114,8 @@ Flags worth knowing:
 - [x] Per-failure ranking so commands that always succeed surface above
   commands that always fail (`top` weights by success rate; `top --failing`
   shows the chronic failures)
-- [ ] Export to `fewer-permission-prompts`-style allowlist
+- [x] Export to `fewer-permission-prompts`-style allowlist
+  (`aztarna allowlist`)
 - [ ] Cross-project view: "what do I run in every Rust repo I touch?"
 
 ## Tests

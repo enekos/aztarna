@@ -215,6 +215,57 @@ pub fn sequences(conn: &Connection, scope: &Path, limit: usize) -> Result<Vec<Se
     Ok(out)
 }
 
+/// Heads Claude Code already treats as read-only (no permission prompt in
+/// any mode), so emitting allow rules for them is pure noise.
+const READ_ONLY_HEADS: &[&str] = &[
+    "ls",
+    "cat",
+    "echo",
+    "pwd",
+    "head",
+    "tail",
+    "grep",
+    "wc",
+    "which",
+    "diff",
+    "stat",
+    "du",
+    "cd",
+    "find",
+    "rg",
+    "fd",
+    "git status",
+    "git log",
+    "git diff",
+    "git show",
+    "git branch",
+];
+
+/// Render the scope's top-ranked heads as Claude Code `permissions.allow`
+/// entries, e.g. `Bash(cargo test:*)`. The `:*` suffix is Claude Code's
+/// prefix-match form (equivalent to a trailing ` *` wildcard), so the rule
+/// covers any arguments to the ranked head.
+///
+/// Ranking is success-weighted via `top`, so chronically failing commands
+/// are naturally demoted out of the list. Heads Claude Code treats as
+/// read-only anyway are skipped.
+pub fn allowlist(
+    conn: &Connection,
+    scope: &Path,
+    half_life_days: f64,
+    n: usize,
+    min_score: f64,
+) -> Result<Vec<String>> {
+    let rows = top(conn, scope, half_life_days, n, None, false)?;
+    Ok(rows
+        .into_iter()
+        .filter(|r| r.score >= min_score)
+        .filter(|r| !r.head.is_empty())
+        .filter(|r| !READ_ONLY_HEADS.contains(&r.head.as_str()))
+        .map(|r| format!("Bash({}:*)", r.head))
+        .collect())
+}
+
 #[derive(Debug, Serialize)]
 pub struct Stats {
     pub total_rows: i64,

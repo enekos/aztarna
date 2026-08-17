@@ -421,6 +421,91 @@ fn failing_view_ranks_by_failure_mass() {
 }
 
 #[test]
+fn allowlist_emits_prefix_rules_and_skips_read_only() {
+    let (_tmp, conn) = fresh_db();
+    let cwd = "/tmp/proj-allow";
+
+    let mut ok = payload("s1", cwd, "cargo test --lib");
+    ok.tool_response.exit_code = Some(0);
+    for _ in 0..3 {
+        ingest::ingest(&conn, &ok).unwrap();
+    }
+    // Read-only for Claude Code already — must not produce a rule.
+    ingest::ingest(&conn, &payload("s1", cwd, "ls -la")).unwrap();
+    ingest::ingest(&conn, &payload("s1", cwd, "git status -s")).unwrap();
+
+    let scope = PathBuf::from(cwd);
+    let rules = query::allowlist(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 10, 0.0).unwrap();
+
+    assert_eq!(rules, vec!["Bash(cargo test:*)".to_string()]);
+}
+
+#[test]
+fn allowlist_respects_min_score_and_limit() {
+    let (_tmp, conn) = fresh_db();
+    let cwd = "/tmp/proj-allow-min";
+
+    for _ in 0..5 {
+        ingest::ingest(&conn, &payload("s1", cwd, "cargo build")).unwrap();
+    }
+    ingest::ingest(&conn, &payload("s1", cwd, "cargo clippy")).unwrap();
+    ingest::ingest(&conn, &payload("s1", cwd, "cargo fmt")).unwrap();
+
+    let scope = PathBuf::from(cwd);
+
+    // min_score above a single fresh hit (~1.0) keeps only cargo build.
+    let rules = query::allowlist(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 10, 2.0).unwrap();
+    assert_eq!(rules, vec!["Bash(cargo build:*)".to_string()]);
+
+    // limit=1 keeps only the top-ranked head.
+    let rules = query::allowlist(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 1, 0.0).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0], "Bash(cargo build:*)");
+}
+
+#[test]
+fn allowlist_cli_emits_settings_json_shape() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let tmp = TempDir::new().unwrap();
+    let db = tmp.path().join("aztarna.sqlite");
+    let bin = env!("CARGO_BIN_EXE_aztarna");
+
+    let payload = r#"{"session_id":"s1","cwd":"/tmp/proj-cli","tool_name":"Bash",
+        "tool_input":{"command":"cargo test"},"tool_response":{"exit_code":0}}"#;
+    let mut child = Command::new(bin)
+        .args(["--db", db.to_str().unwrap(), "log"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(payload.as_bytes())
+        .unwrap();
+    assert!(child.wait().unwrap().success());
+
+    let out = Command::new(bin)
+        .args([
+            "--db",
+            db.to_str().unwrap(),
+            "allowlist",
+            "--cwd",
+            "/tmp/proj-cli",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        doc["permissions"]["allow"],
+        serde_json::json!(["Bash(cargo test:*)"])
+    );
+}
+
+#[test]
 fn context_block_includes_top_and_sequences() {
     let (_tmp, conn) = fresh_db();
     let cwd = "/tmp/proj-g";
