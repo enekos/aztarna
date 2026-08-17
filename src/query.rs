@@ -175,6 +175,80 @@ pub fn failing(
     Ok(out)
 }
 
+#[derive(Debug, Serialize)]
+pub struct GlobalTopRow {
+    pub head: String,
+    pub score: f64,
+    pub hits: i64,
+    /// How many distinct scopes (projects) this head was run in.
+    pub scopes: i64,
+}
+
+/// Cross-project ranking: same decay + success-rate weighting as `top`,
+/// but aggregated over every scope. Answers "what do I run in every repo I
+/// touch?" — `scopes` tells apart universal habits from local ones.
+pub fn top_global(
+    conn: &Connection,
+    half_life_days: f64,
+    limit: usize,
+    query: Option<&str>,
+    success_only: bool,
+) -> Result<Vec<GlobalTopRow>> {
+    let now = Utc::now().timestamp();
+    let half_life_secs = half_life_days * 86_400.0;
+    let query_pattern = query.map(|q| format!("%{}%", q.to_lowercase()));
+    let success_filter = success_only as i64;
+
+    let mut stmt = conn.prepare(
+        r#"
+        WITH scored AS (
+            SELECT
+                head,
+                scope,
+                exit_code,
+                decay_score(CAST(?1 - ts AS REAL), ?2) AS w
+            FROM commands
+            WHERE (?3 IS NULL OR LOWER(command) LIKE ?3)
+              AND (?4 = 0 OR exit_code = 0)
+        )
+        SELECT
+            head,
+            SUM(w) * (SUM(CASE WHEN exit_code IS NULL OR exit_code = 0
+                               THEN 1 ELSE 0 END) * 1.0 / COUNT(*)) AS score,
+            COUNT(*)             AS hits,
+            COUNT(DISTINCT scope) AS scopes
+        FROM scored
+        GROUP BY head
+        ORDER BY score DESC, hits DESC
+        LIMIT ?5
+        "#,
+    )?;
+
+    let rows = stmt.query_map(
+        params![
+            now,
+            half_life_secs,
+            query_pattern.as_deref(),
+            success_filter,
+            limit as i64
+        ],
+        |row| {
+            Ok(GlobalTopRow {
+                head: row.get(0)?,
+                score: row.get(1)?,
+                hits: row.get(2)?,
+                scopes: row.get(3)?,
+            })
+        },
+    )?;
+
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 /// Most common (prev_head -> next_head) transitions inside a single session,
 /// scoped by either the previous or next row's scope. Self-transitions are
 /// filtered out — they're usually noise (re-running the same `ls`).

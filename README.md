@@ -69,6 +69,7 @@ aztarna top               # ranked commands for the current project
 aztarna top --query test  # filter to commands containing "test"
 aztarna top --success-only  # only commands that exited successfully
 aztarna top --failing       # rank by decay-weighted failures instead
+aztarna top --global        # aggregate across every project ("what do I run everywhere?")
 aztarna sequences         # common (A -> B) command pairs
 aztarna allowlist         # permissions.allow JSON for this project's top commands
 aztarna context           # markdown block injected into SessionStart
@@ -108,20 +109,21 @@ Flags: `-n` for count (default 15), `--min-score` to drop low scorers.
 
 ## Roadmap
 
-- [ ] Argument-level fingerprinting (group `cargo test --release` and
-  `cargo test --no-default-features` separately when the divergence is
-  consistent enough to matter)
 - [x] Per-failure ranking so commands that always succeed surface above
   commands that always fail (`top` weights by success rate; `top --failing`
   shows the chronic failures)
 - [x] Export to `fewer-permission-prompts`-style allowlist
   (`aztarna allowlist`)
-- [ ] Cross-project view: "what do I run in every Rust repo I touch?"
+- [x] Cross-project view: "what do I run in every Rust repo I touch?"
+  (`aztarna top --global`, with a per-head project count)
+- [ ] Argument-level fingerprinting (group `cargo test --release` and
+  `cargo test --no-default-features` separately when the divergence is
+  consistent enough to matter)
 
 ## Tests
 
 ```
-cargo test          # 19 tests: 7 unit + 12 integration
+cargo test          # 31 tests: 7 unit + 24 integration
 ```
 
 Integration tests fabricate hook payloads against a temp SQLite, exercising

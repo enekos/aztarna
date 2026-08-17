@@ -55,6 +55,9 @@ enum Cmd {
         /// failures, exit code present and non-zero).
         #[arg(long, conflicts_with = "success_only")]
         failing: bool,
+        /// Aggregate across every project, ignoring scope.
+        #[arg(long, conflicts_with_all = ["cwd", "scope", "failing"])]
+        global: bool,
         /// Emit JSON instead of a human table.
         #[arg(long)]
         json: bool,
@@ -146,8 +149,24 @@ fn main() -> Result<()> {
             query,
             success_only,
             failing,
+            global,
             json,
         } => {
+            if global {
+                let rows = query::top_global(
+                    &conn,
+                    half_life_days,
+                    limit,
+                    query.as_deref(),
+                    success_only,
+                )?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&rows)?);
+                } else {
+                    print_global(&rows);
+                }
+                return Ok(());
+            }
             let scope_path = resolve_scope(cwd, scope)?;
             if failing {
                 let rows = query::failing(&conn, &scope_path, half_life_days, limit)?;
@@ -284,6 +303,28 @@ fn print_sequences(scope: &std::path::Path, rows: &[query::SequenceRow]) {
     println!("{:>5}  {:<24} -> next", "hits", "prev");
     for r in rows {
         println!("{:>5}  {:<24} -> {}", r.hits, r.prev, r.next);
+    }
+}
+
+fn print_global(rows: &[query::GlobalTopRow]) {
+    if rows.is_empty() {
+        println!("(no commands logged yet)");
+        return;
+    }
+    println!("scope: <all projects>");
+    println!(
+        "{:>3}  {:>8}  {:>5}  {:>6}  head",
+        "#", "score", "hits", "scopes"
+    );
+    for (i, r) in rows.iter().enumerate() {
+        println!(
+            "{:>3}  {:>8.3}  {:>5}  {:>6}  {}",
+            i + 1,
+            r.score,
+            r.hits,
+            r.scopes,
+            r.head
+        );
     }
 }
 

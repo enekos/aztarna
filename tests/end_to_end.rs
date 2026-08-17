@@ -506,6 +506,44 @@ fn allowlist_cli_emits_settings_json_shape() {
 }
 
 #[test]
+fn global_top_aggregates_across_scopes() {
+    let (_tmp, conn) = fresh_db();
+
+    // cargo test is a habit in two projects; go test in only one.
+    for _ in 0..3 {
+        ingest::ingest(&conn, &payload("s1", "/tmp/g-a", "cargo test")).unwrap();
+    }
+    for _ in 0..2 {
+        ingest::ingest(&conn, &payload("s2", "/tmp/g-b", "cargo test --lib")).unwrap();
+    }
+    for _ in 0..4 {
+        ingest::ingest(&conn, &payload("s3", "/tmp/g-c", "go test ./...")).unwrap();
+    }
+
+    let rows = query::top_global(&conn, query::DEFAULT_HALF_LIFE_DAYS, 10, None, false).unwrap();
+
+    assert_eq!(rows.len(), 2);
+    // cargo test: 5 hits across 2 scopes beats go test's 4 hits in 1 scope.
+    assert_eq!(rows[0].head, "cargo test");
+    assert_eq!(rows[0].hits, 5);
+    assert_eq!(rows[0].scopes, 2);
+    assert_eq!(rows[1].head, "go test");
+    assert_eq!(rows[1].scopes, 1);
+
+    // The query filter works globally too.
+    let rows = query::top_global(
+        &conn,
+        query::DEFAULT_HALF_LIFE_DAYS,
+        10,
+        Some("./..."),
+        false,
+    )
+    .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].head, "go test");
+}
+
+#[test]
 fn context_block_includes_top_and_sequences() {
     let (_tmp, conn) = fresh_db();
     let cwd = "/tmp/proj-g";
