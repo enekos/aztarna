@@ -334,6 +334,9 @@ pub fn allowlist(
     Ok(rows
         .into_iter()
         .filter(|r| r.score >= min_score)
+        // A command that has never succeeded has no business being
+        // pre-approved (with the default min_score of 0 it would slip in).
+        .filter(|r| r.success_rate > 0.0)
         .filter(|r| !r.head.is_empty())
         .filter(|r| !READ_ONLY_HEADS.contains(&r.head.as_str()))
         .map(|r| format!("Bash({}:*)", r.head))

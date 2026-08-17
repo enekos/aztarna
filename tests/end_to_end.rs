@@ -434,6 +434,11 @@ fn allowlist_emits_prefix_rules_and_skips_read_only() {
     ingest::ingest(&conn, &payload("s1", cwd, "ls -la")).unwrap();
     ingest::ingest(&conn, &payload("s1", cwd, "git status -s")).unwrap();
 
+    // Never succeeded — must not be pre-approved.
+    let mut broken = payload("s1", cwd, "make deploy");
+    broken.tool_response.exit_code = Some(1);
+    ingest::ingest(&conn, &broken).unwrap();
+
     let scope = PathBuf::from(cwd);
     let rules = query::allowlist(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 10, 0.0).unwrap();
 

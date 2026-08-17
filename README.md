@@ -103,8 +103,9 @@ The `:*` suffix is Claude Code's prefix-match form (equivalent to a trailing
 ` *` wildcard), so one rule covers any arguments to that command head. Merge
 the output into `.claude/settings.json` (shared with the team) or
 `.claude/settings.local.json` (just you). Ranking is success-weighted, so
-chronically failing commands demote themselves out of the list, and commands
-Claude Code treats as read-only anyway (`ls`, `git status`, ...) are skipped.
+chronically failing commands demote themselves out of the list, commands
+that have *never* succeeded are excluded outright, and commands Claude Code
+treats as read-only anyway (`ls`, `git status`, ...) are skipped.
 Flags: `-n` for count (default 15), `--min-score` to drop low scorers.
 
 ## Roadmap
