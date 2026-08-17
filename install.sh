@@ -11,8 +11,16 @@ SETTINGS="${CLAUDE_SETTINGS:-$HOME/.claude/settings.json}"
 echo "==> building release"
 cargo build --release --manifest-path "$REPO_DIR/Cargo.toml"
 
+# Don't assume $REPO_DIR/target — a global build.target-dir in ~/.cargo/config.toml
+# (or CARGO_TARGET_DIR) redirects it elsewhere. Ask cargo where it actually built.
+TARGET_DIR="$(cargo metadata --format-version 1 --no-deps \
+    --manifest-path "$REPO_DIR/Cargo.toml" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
+BIN="$TARGET_DIR/release/aztarna"
+[[ -x "$BIN" ]] || { echo "!! no binary at $BIN after a successful build" >&2; exit 1; }
+
 mkdir -p "$INSTALL_DIR"
-cp "$REPO_DIR/target/release/aztarna" "$INSTALL_DIR/aztarna"
+cp "$BIN" "$INSTALL_DIR/aztarna"
 echo "==> installed binary to $INSTALL_DIR/aztarna"
 
 # Ensure the data dir + db exist before any hook fires (warmup).
