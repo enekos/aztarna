@@ -16,6 +16,9 @@ pub struct TopRow {
     pub head: String,
     pub score: f64,
     pub hits: i64,
+    /// Fraction of runs that exited 0. Unknown exit codes (NULL) count as
+    /// success — we can't prove a failure we never saw.
+    pub success_rate: f64,
     pub last_command: String,
 }
 
@@ -46,6 +49,7 @@ pub fn top(
                 head,
                 command,
                 ts,
+                exit_code,
                 decay_score(CAST(?1 - ts AS REAL), ?2) AS w
             FROM commands
             WHERE scope = ?3
@@ -55,23 +59,25 @@ pub fn top(
         agg AS (
             SELECT
                 head,
-                SUM(w)     AS score,
+                SUM(w)     AS raw_score,
                 COUNT(*)   AS hits,
-                MAX(ts)    AS last_ts
+                SUM(CASE WHEN exit_code IS NULL OR exit_code = 0
+                         THEN 1 ELSE 0 END) AS successes
             FROM scored
             GROUP BY head
         )
         SELECT
             agg.head,
-            agg.score,
+            agg.raw_score * (agg.successes * 1.0 / agg.hits) AS score,
             agg.hits,
+            agg.successes * 1.0 / agg.hits AS success_rate,
             (SELECT command FROM commands
               WHERE scope = ?3 AND head = agg.head
                 AND (?4 IS NULL OR LOWER(command) LIKE ?4)
                 AND (?5 = 0 OR exit_code = 0)
               ORDER BY ts DESC LIMIT 1) AS last_command
         FROM agg
-        ORDER BY agg.score DESC, agg.hits DESC
+        ORDER BY score DESC, agg.hits DESC
         LIMIT ?6
         "#,
     )?;
@@ -90,6 +96,73 @@ pub fn top(
                 head: row.get(0)?,
                 score: row.get(1)?,
                 hits: row.get(2)?,
+                success_rate: row.get(3)?,
+                last_command: row.get(4)?,
+            })
+        },
+    )?;
+
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Serialize)]
+pub struct FailingRow {
+    pub head: String,
+    /// Decay-weighted mass of failing runs only.
+    pub score: f64,
+    pub failures: i64,
+    pub last_command: String,
+}
+
+/// Heads ranked by how much they *fail* (exit code present and non-zero),
+/// decay-weighted like `top`. Successes don't count here — this is the view
+/// for "what keeps breaking in this project?".
+pub fn failing(
+    conn: &Connection,
+    scope: &Path,
+    half_life_days: f64,
+    limit: usize,
+) -> Result<Vec<FailingRow>> {
+    let now = Utc::now().timestamp();
+    let half_life_secs = half_life_days * 86_400.0;
+
+    let mut stmt = conn.prepare(
+        r#"
+        WITH scored AS (
+            SELECT
+                head,
+                decay_score(CAST(?1 - ts AS REAL), ?2) AS w
+            FROM commands
+            WHERE scope = ?3
+              AND exit_code IS NOT NULL
+              AND exit_code <> 0
+        )
+        SELECT
+            head,
+            SUM(w)   AS score,
+            COUNT(*) AS failures,
+            (SELECT command FROM commands
+              WHERE scope = ?3 AND head = scored.head
+                AND exit_code IS NOT NULL AND exit_code <> 0
+              ORDER BY ts DESC LIMIT 1) AS last_command
+        FROM scored
+        GROUP BY head
+        ORDER BY score DESC, failures DESC
+        LIMIT ?4
+        "#,
+    )?;
+
+    let rows = stmt.query_map(
+        params![now, half_life_secs, scope.to_string_lossy(), limit as i64],
+        |row| {
+            Ok(FailingRow {
+                head: row.get(0)?,
+                score: row.get(1)?,
+                failures: row.get(2)?,
                 last_command: row.get(3)?,
             })
         },

@@ -51,6 +51,10 @@ enum Cmd {
         /// Only count commands that exited successfully (exit code 0).
         #[arg(long)]
         success_only: bool,
+        /// Rank commands by how much they fail instead (decay-weighted
+        /// failures, exit code present and non-zero).
+        #[arg(long, conflicts_with = "success_only")]
+        failing: bool,
         /// Emit JSON instead of a human table.
         #[arg(long)]
         json: bool,
@@ -122,9 +126,19 @@ fn main() -> Result<()> {
             half_life_days,
             query,
             success_only,
+            failing,
             json,
         } => {
             let scope_path = resolve_scope(cwd, scope)?;
+            if failing {
+                let rows = query::failing(&conn, &scope_path, half_life_days, limit)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&rows)?);
+                } else {
+                    print_failing(&scope_path, &rows);
+                }
+                return Ok(());
+            }
             let rows = query::top(
                 &conn,
                 &scope_path,
@@ -190,8 +204,32 @@ fn print_top(scope: &std::path::Path, rows: &[query::TopRow]) {
     }
     println!("scope: {}", scope.display());
     println!(
+        "{:>3}  {:>8}  {:>5}  {:>4}  {:<24}  last",
+        "#", "score", "hits", "ok%", "head"
+    );
+    for (i, r) in rows.iter().enumerate() {
+        let last = truncate(&r.last_command, 60);
+        println!(
+            "{:>3}  {:>8.3}  {:>5}  {:>3.0}%  {:<24}  {}",
+            i + 1,
+            r.score,
+            r.hits,
+            r.success_rate * 100.0,
+            r.head,
+            last
+        );
+    }
+}
+
+fn print_failing(scope: &std::path::Path, rows: &[query::FailingRow]) {
+    if rows.is_empty() {
+        println!("(no failing commands logged for scope {})", scope.display());
+        return;
+    }
+    println!("scope: {}", scope.display());
+    println!(
         "{:>3}  {:>8}  {:>5}  {:<24}  last",
-        "#", "score", "hits", "head"
+        "#", "score", "fails", "head"
     );
     for (i, r) in rows.iter().enumerate() {
         let last = truncate(&r.last_command, 60);
@@ -199,7 +237,7 @@ fn print_top(scope: &std::path::Path, rows: &[query::TopRow]) {
             "{:>3}  {:>8.3}  {:>5}  {:<24}  {}",
             i + 1,
             r.score,
-            r.hits,
+            r.failures,
             r.head,
             last
         );

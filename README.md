@@ -31,9 +31,11 @@ Claude Code → PostToolUse hook → `aztarna log` (stdin JSON) → sqlite
 - **Storage**: one SQLite db per user at
   `~/Library/Application Support/dev.eneko.aztarna/aztarna.sqlite` (macOS) or
   the XDG equivalent on Linux.
-- **Ranking**: `score = Σ exp(-age_days · ln(2) / half_life_days)`. Default
-  half-life is 14 days — a daily habit dominates ranking for ~a month before
-  fading.
+- **Ranking**: `score = Σ exp(-age_days · ln(2) / half_life_days) ·
+  success_rate`. Default half-life is 14 days — a daily habit dominates
+  ranking for ~a month before fading. `success_rate` is the fraction of runs
+  that exited 0 (unknown exit codes count as success), so commands that
+  chronically fail sink instead of being recommended.
 - **Scope**: by default, the git root of the current cwd. So a session in
   `~/eneko_projects/aztarna/src/` ranks against the whole repo, not just
   that subdir.
@@ -66,6 +68,7 @@ aztarna log               # ingest one PostToolUse payload from stdin (hook use)
 aztarna top               # ranked commands for the current project
 aztarna top --query test  # filter to commands containing "test"
 aztarna top --success-only  # only commands that exited successfully
+aztarna top --failing       # rank by decay-weighted failures instead
 aztarna sequences         # common (A -> B) command pairs
 aztarna context           # markdown block injected into SessionStart
 aztarna stats             # row count, distinct scopes, etc.
@@ -86,8 +89,9 @@ Flags worth knowing:
 - [ ] Argument-level fingerprinting (group `cargo test --release` and
   `cargo test --no-default-features` separately when the divergence is
   consistent enough to matter)
-- [ ] Per-failure ranking so commands that always succeed surface above
-  commands that always fail
+- [x] Per-failure ranking so commands that always succeed surface above
+  commands that always fail (`top` weights by success rate; `top --failing`
+  shows the chronic failures)
 - [ ] Export to `fewer-permission-prompts`-style allowlist
 - [ ] Cross-project view: "what do I run in every Rust repo I touch?"
 

@@ -284,7 +284,15 @@ fn top_query_filters_by_command_text() {
     ingest::ingest(&conn, &payload("s1", cwd, "git status -s")).unwrap();
 
     let scope = PathBuf::from(cwd);
-    let top = query::top(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 10, Some("test"), false).unwrap();
+    let top = query::top(
+        &conn,
+        &scope,
+        query::DEFAULT_HALF_LIFE_DAYS,
+        10,
+        Some("test"),
+        false,
+    )
+    .unwrap();
 
     assert_eq!(top.len(), 1);
     assert_eq!(top[0].head, "cargo test");
@@ -307,11 +315,109 @@ fn top_success_only_excludes_failures() {
     }
 
     let scope = PathBuf::from(cwd);
-    let top_all = query::top(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 10, None, false).unwrap();
+    let top_all = query::top(
+        &conn,
+        &scope,
+        query::DEFAULT_HALF_LIFE_DAYS,
+        10,
+        None,
+        false,
+    )
+    .unwrap();
     let top_ok = query::top(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 10, None, true).unwrap();
 
     assert_eq!(top_all[0].hits, 6, "all runs counted without success_only");
     assert_eq!(top_ok[0].hits, 1, "only successful runs counted");
+}
+
+#[test]
+fn top_weights_failures_into_score() {
+    let (_tmp, conn) = fresh_db();
+    let cwd = "/tmp/proj-fail-weight";
+
+    // 2 clean runs of cargo test.
+    let mut ok = payload("s1", cwd, "cargo test");
+    ok.tool_response.exit_code = Some(0);
+    for _ in 0..2 {
+        ingest::ingest(&conn, &ok).unwrap();
+    }
+
+    // 4 runs of make deploy, only 1 succeeds — raw hit count is higher,
+    // but the success-rate weight should pull it below cargo test.
+    for code in [0, 1, 1, 1] {
+        let mut p = payload("s1", cwd, "make deploy");
+        p.tool_response.exit_code = Some(code);
+        ingest::ingest(&conn, &p).unwrap();
+    }
+
+    let scope = PathBuf::from(cwd);
+    let top = query::top(
+        &conn,
+        &scope,
+        query::DEFAULT_HALF_LIFE_DAYS,
+        10,
+        None,
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(top[0].head, "cargo test");
+    assert!((top[0].success_rate - 1.0).abs() < 1e-9);
+    assert_eq!(top[1].head, "make deploy");
+    assert_eq!(top[1].hits, 4);
+    assert!((top[1].success_rate - 0.25).abs() < 1e-9);
+    assert!(top[0].score > top[1].score);
+}
+
+#[test]
+fn unknown_exit_code_counts_as_success() {
+    let (_tmp, conn) = fresh_db();
+    let cwd = "/tmp/proj-unknown-exit";
+    // payload() leaves exit_code None — the common case for older rows.
+    ingest::ingest(&conn, &payload("s1", cwd, "cargo build")).unwrap();
+
+    let scope = PathBuf::from(cwd);
+    let top = query::top(
+        &conn,
+        &scope,
+        query::DEFAULT_HALF_LIFE_DAYS,
+        10,
+        None,
+        false,
+    )
+    .unwrap();
+    assert!((top[0].success_rate - 1.0).abs() < 1e-9);
+    assert!(top[0].score > 0.0, "NULL exit code must not zero the score");
+}
+
+#[test]
+fn failing_view_ranks_by_failure_mass() {
+    let (_tmp, conn) = fresh_db();
+    let cwd = "/tmp/proj-failing";
+
+    let fail = |command: &str, n: usize| {
+        for _ in 0..n {
+            let mut p = payload("s1", cwd, command);
+            p.tool_response.exit_code = Some(1);
+            ingest::ingest(&conn, &p).unwrap();
+        }
+    };
+    fail("make deploy", 3);
+    fail("cargo test", 1);
+
+    // A pure-success command must not appear in the failing view.
+    let mut ok = payload("s1", cwd, "cargo build");
+    ok.tool_response.exit_code = Some(0);
+    ingest::ingest(&conn, &ok).unwrap();
+
+    let scope = PathBuf::from(cwd);
+    let rows = query::failing(&conn, &scope, query::DEFAULT_HALF_LIFE_DAYS, 10).unwrap();
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].head, "make deploy");
+    assert_eq!(rows[0].failures, 3);
+    assert_eq!(rows[1].head, "cargo test");
+    assert!(rows.iter().all(|r| r.head != "cargo build"));
 }
 
 #[test]
