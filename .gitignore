@@ -4,3 +4,4 @@ Cargo.lock.bak
 *.sqlite-shm
 *.sqlite-wal
 .DS_Store
+/result

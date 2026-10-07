@@ -1,0 +1,17 @@
+name: aztarna
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+maintainer: Eneko Sarasola <113593779+enekos@users.noreply.github.com>
+description: "Per-cwd bash command ranker that observes Claude Code via hooks."
+homepage: https://github.com/enekos/aztarna
+license: MIT
+contents:
+  - src: dist/pkg/aztarna
+    dst: /usr/bin/aztarna
+    file_info:
+      mode: 0755
+  - src: LICENSE
+    dst: /usr/share/licenses/aztarna/LICENSE
+  - src: README.md
+    dst: /usr/share/doc/aztarna/README.md

@@ -61,6 +61,20 @@ The installer is idempotent:
 To uninstall, delete the binary, drop the `hooks` entries from
 `~/.claude/settings.json`, and remove the data dir.
 
+### Linux packages
+
+```bash
+yay -S aztarna                                     # Arch, from the AUR
+sudo apt install ./aztarna_<version>_amd64.deb       # Debian, Ubuntu
+sudo dnf install ./aztarna-<version>-1.x86_64.rpm    # Fedora, RHEL
+sudo apk add --allow-untrusted ./aztarna_<version>_x86_64.apk   # Alpine
+nix run github:enekos/aztarna                     # Nix
+```
+
+The `.deb`, `.rpm` and `.apk` files are on each [release](https://github.com/enekos/aztarna/releases), for x86_64 and arm64.
+
+These install the binary only; add the two hooks to `~/.claude/settings.json` as `install.sh` does.
+
 ## CLI
 
 ```
